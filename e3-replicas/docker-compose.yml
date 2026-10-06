@@ -1,0 +1,56 @@
+# ENTREGA 3 — O serviço não pode cair
+#
+# Três réplicas do mesmo serviço no segmento B, um cliente no segmento A e o
+# roteador da Entrega 2 no meio. Cada réplica responde com o próprio nome.
+#
+# TAREFA DO GRUPO: reescrever cliente.sh. A versão que vem aqui fala com UMA
+# réplica fixa — some com ela e o serviço "cai". O cliente tem de continuar
+# respondendo enquanto sobrar pelo menos uma réplica, e desistir com aviso
+# claro (sem travar) quando não sobrar nenhuma.
+
+name: e3
+
+x-replica: &replica
+  image: redes-lab-base:1
+  cap_add: [NET_ADMIN]
+
+services:
+  cliente:
+    image: redes-lab-base:1
+    container_name: e3-cliente
+    cap_add: [NET_ADMIN]
+    volumes: ["./cliente.sh:/lab/cliente.sh:ro"]
+    command: ["sh","-c","ip route del default 2>/dev/null||true; ip route add 10.0.20.0/24 via 10.0.10.254; exec sleep infinity"]
+    networks: {seg-a: {ipv4_address: 10.0.10.10}}
+
+  replica1:
+    <<: *replica
+    container_name: e3-replica1
+    command: ["sh","-c","ip route del default 2>/dev/null||true; ip route add 10.0.10.0/24 via 10.0.20.254; echo replica1 > /srv/index.html; exec httpd -f -p 8080 -h /srv"]
+    networks: {seg-b: {ipv4_address: 10.0.20.21}}
+
+  replica2:
+    <<: *replica
+    container_name: e3-replica2
+    command: ["sh","-c","ip route del default 2>/dev/null||true; ip route add 10.0.10.0/24 via 10.0.20.254; echo replica2 > /srv/index.html; exec httpd -f -p 8080 -h /srv"]
+    networks: {seg-b: {ipv4_address: 10.0.20.22}}
+
+  replica3:
+    <<: *replica
+    container_name: e3-replica3
+    command: ["sh","-c","ip route del default 2>/dev/null||true; ip route add 10.0.10.0/24 via 10.0.20.254; echo replica3 > /srv/index.html; exec httpd -f -p 8080 -h /srv"]
+    networks: {seg-b: {ipv4_address: 10.0.20.23}}
+
+  router:
+    image: redes-lab-base:1
+    container_name: e3-router
+    cap_add: [NET_ADMIN, NET_RAW]
+    sysctls: ["net.ipv4.ip_forward=1"]
+    command: ["sh","-c","ip route del default 2>/dev/null||true; sysctl -w net.ipv4.ip_forward=1 2>/dev/null||true; exec sleep infinity"]
+    networks:
+      seg-a: {ipv4_address: 10.0.10.254}
+      seg-b: {ipv4_address: 10.0.20.254}
+
+networks:
+  seg-a: {driver: bridge, ipam: {config: [{subnet: 10.0.10.0/24}]}}
+  seg-b: {driver: bridge, ipam: {config: [{subnet: 10.0.20.0/24}]}}
