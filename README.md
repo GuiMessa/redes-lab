@@ -155,3 +155,55 @@ mudam** — o quadro é refeito a cada enlace, enquanto o pacote IP atravessa a
 rede inteira. O `host-a2`, sem rota, nunca chega a gerar esse tráfego: ele
 continua falhando com `Network is unreachable`, o que prova que foi a rota, e
 só ela, que fez `host-a1` atravessar.
+
+---
+
+## Entrega 3 — O serviço não pode cair
+
+### Como o `cliente.sh` funciona
+
+O cliente original falava com uma réplica fixa (`10.0.20.21`): bastava parar
+essa réplica para o serviço "cair", mesmo com as outras duas saudáveis. A nova
+versão (`e3-replicas/cliente.sh`) tenta as três réplicas, uma de cada vez, e
+devolve o nome da **primeira que responder**:
+
+* **Tempo limitado:** cada tentativa usa `curl -m 1` (teto de 1 s). Com as três
+  réplicas inalcançáveis o pior caso é 3 × 1 s = **3 s**, dentro do limite de 5 s
+  do contrato. A verificação mediu 3 s na partição de rede, o caso mais lento.
+* **Nunca anuncia réplica que não respondeu:** só é impresso o que a réplica
+  de fato devolveu, e só se for uma palavra válida no formato `replicaN`.
+  Resposta vazia, erro ou lixo contam como "não respondeu". Se nenhuma responder,
+  o cliente escreve `INDISPONIVEL` e sai com código 1.
+* **Balanceamento simples:** a primeira réplica tentada gira com o relógio
+  (segundo atual módulo 3), para que, com todas no ar, a carga não caia sempre
+  na mesma.
+
+### O cliente distingue uma réplica morta de uma particionada?
+
+**Não distingue, e não tem como distinguir.** Do ponto de vista de quem chama,
+as duas falhas produzem exatamente a mesma observação: o pedido sai e **nenhuma
+resposta volta dentro do prazo**. Réplica parada (`docker stop`) e réplica
+particionada (`docker network disconnect`) são indistinguíveis por esse
+critério: na primeira o processo não existe mais; na segunda ele continua
+vivo, processando e achando que está tudo bem, só que ninguém consegue falar com
+ele. O silêncio não carrega a informação de *por que* houve silêncio. O
+`timeout` é só uma **suspeita**: ele pode estar errado (uma réplica apenas lenta
+ou com a rede congestionada também estoura o teto de 1 s e é descartada
+injustamente), e um prazo maior para ser mais justo estouraria o limite de 5 s.
+
+**Isso é um problema?** Depende do que o serviço faz. Para este serviço — uma
+**leitura sem estado**, em que qualquer réplica devolve a mesma coisa —
+**não é um problema**: tratar morte e partição do mesmo jeito (descartar a
+réplica e passar para a próxima) é a resposta certa, e é justamente isso que dá
+transparência a quem chama. O problema aparece quando o serviço **guarda estado
+ou aceita escritas**. Uma réplica particionada continua viva e pode continuar
+aceitando escritas de clientes do lado dela da rede, enquanto outros clientes
+escrevem nas demais réplicas: o sistema acaba com cópias que divergem (o
+chamado *split-brain*). Do mesmo modo, se o cliente desiste de uma réplica que
+na verdade havia executado o pedido e só não conseguiu responder, e repete o
+pedido em outra, uma operação não idempotente (como "debitar R$ 10") pode ser
+executada duas vezes. Nesses casos são necessários mecanismos que o cliente
+sozinho não tem: operações idempotentes, quórum (só vale a escrita confirmada
+pela maioria das réplicas) e eleição de líder. A lição geral é que, numa rede
+assíncrona, "morto" e "incomunicável" não se distinguem de fora, e é por isso que
+sistemas distribuídos precisam decidir de antemão o que fazer na dúvida.
