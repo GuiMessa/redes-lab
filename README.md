@@ -207,3 +207,104 @@ sozinho não tem: operações idempotentes, quórum (só vale a escrita confirma
 pela maioria das réplicas) e eleição de líder. A lição geral é que, numa rede
 assíncrona, "morto" e "incomunicável" não se distinguem de fora, e é por isso que
 sistemas distribuídos precisam decidir de antemão o que fazer na dúvida.
+
+---
+
+## Entrega 4 — A rota se refaz sozinha
+
+### O que foi feito
+
+* `e4-roteamento/iniciar-roteador.sh`: removidas as rotas estáticas (`case` e
+  `exec sleep`); cada roteador agora sobe o BIRD com o seu arquivo de
+  configuração (`bird-$ROLE.conf`).
+* `e4-roteamento/bird-r2.conf`: o `router id` era `0.0.0.0`; passou a ser
+  `10.0.20.254` (endereço de r2 no segmento B). Os três roteadores têm
+  identidades diferentes: r1 = `10.0.10.254`, r2 = `10.0.20.254`, r3 = `10.0.40.13`.
+* Os três arquivos usam o mesmo esqueleto: `protocol direct` publica as redes
+  conectadas, `protocol rip` troca essa lista com os vizinhos e `protocol kernel`
+  escreve o resultado na tabela de rotas do sistema (sem ele o roteador aprende
+  e não usa).
+
+### Quanto tempo levou para convergir
+
+Com o trânsito 1 derrubado nas duas pontas (como um cabo rompido), a rede
+voltou sozinha em **15 segundos**, medidos pelo `verificar.sh` (ver
+`e4-roteamento/evidencias/verificacao.txt`). O próximo salto de r1 para a rede B
+**mudou**: antes era direto para r2 pelo trânsito 1 (`10.0.30.12`, 1 salto) e
+depois passou a ser o desvio por r3 (`10.0.40.13`, 2 saltos). Com rotas
+estáticas, nada disso acontecia: a rede ficava fora do ar até alguém reescrever
+a rota à mão.
+
+### E numa rede com 50 roteadores em vez de 3?
+
+O tempo **cresceria**, e não pouco. Três razões, todas ligadas ao jeito como o
+vetor de distância funciona:
+
+1. **A informação anda de vizinho em vizinho.** Um roteador só sabe o que o
+   vizinho lhe conta, e cada roteador reenvia a sua tabela de tempos em tempos
+   (a cada 30 s, no RIP). A notícia "a rota X caiu" precisa atravessar a rede
+   salto a salto; quanto maior o diâmetro da rede, mais saltos e mais tempo.
+   Em 3 roteadores a notícia dá poucos saltos; em 50 ela pode dar muitos.
+2. **Contagem até o infinito.** Quando um caminho some, roteadores que dependiam
+   dele podem trocar anúncios entre siclear
+clear
+cd ~/redes-lab-main
+T=$(sed 's/\x1b\[[0-9;]*m//g' e4-roteamento/evidencias/verificacao.txt | grep -o 'levou [0-9]*s' | head -1 | grep -o '[0-9]*')
+if [ -z "$T" ]; then echo "ERRO: sem tempo na evidencia"; elif grep -q "^## Entrega 4" README.md; then echo "Secao ja existe, nada a fazer"; else
+cat >> README.md <<'EOF'
+
+---
+
+## Entrega 4 — A rota se refaz sozinha
+
+### O que foi feito
+
+* `e4-roteamento/iniciar-roteador.sh`: removidas as rotas estáticas (`case` e
+  `exec sleep`); cada roteador agora sobe o BIRD com o seu arquivo de
+  configuração (`bird-$ROLE.conf`).
+* `e4-roteamento/bird-r2.conf`: o `router id` era `0.0.0.0`; passou a ser
+  `10.0.20.254` (endereço de r2 no segmento B). Os três roteadores têm
+  identidades diferentes: r1 = `10.0.10.254`, r2 = `10.0.20.254`, r3 = `10.0.40.13`.
+* Os três arquivos usam o mesmo esqueleto: `protocol direct` publica as redes
+  conectadas, `protocol rip` troca essa lista com os vizinhos e `protocol kernel`
+  escreve o resultado na tabela de rotas do sistema (sem ele o roteador aprende
+  e não usa).
+
+### Quanto tempo levou para convergir
+
+Com o trânsito 1 derrubado nas duas pontas (como um cabo rompido), a rede
+voltou sozinha em **15 segundos**, medidos pelo `verificar.sh` (ver
+`e4-roteamento/evidencias/verificacao.txt`). O próximo salto de r1 para a rede B
+**mudou**: antes era direto para r2 pelo trânsito 1 (`10.0.30.12`, 1 salto) e
+depois passou a ser o desvio por r3 (`10.0.40.13`, 2 saltos). Com rotas
+estáticas, nada disso acontecia: a rede ficava fora do ar até alguém reescrever
+a rota à mão.
+
+### E numa rede com 50 roteadores em vez de 3?
+
+O tempo **cresceria**, e não pouco. Três razões, todas ligadas ao jeito como o
+vetor de distância funciona:
+
+1. **A informação anda de vizinho em vizinho.** Um roteador só sabe o que o
+   vizinho lhe conta, e cada roteador reenvia a sua tabela de tempos em tempos
+   (a cada 30 s, no RIP). A notícia "a rota X caiu" precisa atravessar a rede
+   salto a salto; quanto maior o diâmetro da rede, mais saltos e mais tempo.
+   Em 3 roteadores a notícia dá poucos saltos; em 50 ela pode dar muitos.
+2. **Contagem até o infinito.** Quando um caminho some, roteadores que dependiam
+   dele podem trocar anúncios entre si, cada um achando que o outro ainda
+   alcança o destino, e a métrica sobe de um em um até chegar ao "infinito". No
+   RIP o infinito é 16, o que também significa que **uma rede com mais de 15
+   saltos de diâmetro simplesmente não cabe no protocolo**. Técnicas como
+   *split horizon* e *poison reverse* reduzem o problema, mas não o eliminam.
+3. **Falha silenciosa pesa muito mais.** Nosso teste derruba a interface, então
+   o roteador percebe na hora e avisa. Se a rota some sem o vizinho perceber (um
+   roteador que trava), o RIP só desiste da rota quando o temporizador expira
+   (180 s por padrão), e esse tempo se soma à propagação.
+
+Além do tempo, o custo de tráfego também cresce: cada roteador envia a tabela
+inteira a cada 30 s, e a tabela tem uma entrada por rede da topologia inteira.
+E a métrica conta só saltos, sem olhar largura de banda ou atraso. Por tudo isso
+o RIP serve para redes pequenas e simples; redes grandes usam protocolos de
+estado de enlace (como OSPF), em que cada roteador tem o mapa completo e calcula
+as rotas localmente, convergindo bem mais rápido. A estimativa para 50 roteadores
+é um raciocínio sobre o protocolo, não uma medição: só medimos o caso de 3.
