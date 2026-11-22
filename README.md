@@ -254,3 +254,15 @@ if [ -z "$T" ]; then echo "ERRO: sem tempo na evidencia"; elif grep -q "^## Entr
 cat >> README.md <<'EOF'
 
 ---
+
+---
+
+## Entrega 1 — Plano de endereçamento
+
+| Segmento | Sub-rede | Endereços totais | Utilizáveis | Hosts |
+|---|---|---|---|---|
+| A | `10.0.10.0/24` | 256 | 254 | `e1-host-a1` = 10.0.10.10 · `e1-host-a2` = 10.0.10.11 · `e1-srv-a` = 10.0.10.20 |
+| B | `10.0.20.0/24` | 256 | 254 | `e1-host-b1` = 10.0.20.10 · `e1-host-b2` = 10.0.20.11 |
+
+Numa `/24` cabem 256 endereços, mas só 254 são de máquinas: o primeiro (`.0`) identifica a rede e o último (`.255`) é o de broadcast.
+Os dois segmentos são separados de propósito: dentro de cada um tudo se enxerga, e entre eles nada passa até a Entrega 2 acrescentar o roteador.
